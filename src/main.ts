@@ -1,29 +1,28 @@
 // chat.ts
 
-// Interface para o formato das mensagens que serão enviadas e recebidas
+// Interface para o formato das mensagens
 interface ChatMessage {
   user: string;
-  text: string; // Mudado de 'message' para 'text' para evitar conflitos com propriedades JS nativas, embora 'message' também funcionasse
-  timestamp: number; // Para ordenar as mensagens se necessário
+  text: string;
+  timestamp: number;
 }
 
-// URL do seu servidor WebSocket Spring Boot
-// Certifique-se de que a porta e o endpoint estão corretos!
-const websocketUrl: string = 'ws://localhost:4250/chat-websocket';
+const websocketUrl: string = 'ws://25.2.135.72:4250/chat-websocket';
 
 let socket: WebSocket | null = null;
 let currentUsername: string = '';
 
-// Elementos do DOM
-const messagesDiv = document.getElementById('messages') as HTMLDivElement;
-const usernameInput = document.getElementById('usernameInput') as HTMLInputElement;
-const messageInput = document.getElementById('messageInput') as HTMLInputElement;
-const sendButton = document.getElementById('sendButton') as HTMLButtonElement;
-const statusParagraph = document.getElementById('status') as HTMLParagraphElement;
+// Seletores DOM
+const messagesDiv = document.getElementById('messages') as HTMLDivElement | null;
+const usernameInput = document.getElementById('usernameInput') as HTMLInputElement | null;
+const messageInput = document.getElementById('messageInput') as HTMLInputElement | null;
+const sendButton = document.getElementById('sendButton') as HTMLButtonElement | null;
+const statusParagraph = document.getElementById('status') as HTMLParagraphElement | null;
 
-// --- Funções de UI ---
-
+// Função para adicionar uma mensagem ao chat
 function appendMessage(user: string, text: string, isSelf: boolean = false): void {
+  if (!messagesDiv) return;
+
   const messageElement = document.createElement('div');
   messageElement.classList.add('message');
   messageElement.classList.add(isSelf ? 'self' : 'other');
@@ -38,11 +37,10 @@ function appendMessage(user: string, text: string, isSelf: boolean = false): voi
   messageElement.appendChild(textNode);
 
   messagesDiv.appendChild(messageElement);
-
-  // Rolar para a última mensagem para manter o foco no chat mais recente
   messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
+// Atualiza o parágrafo de status
 function updateStatus(message: string, color: string = '#666'): void {
   if (statusParagraph) {
     statusParagraph.textContent = message;
@@ -50,134 +48,138 @@ function updateStatus(message: string, color: string = '#666'): void {
   }
 }
 
+// Habilita ou desabilita os campos
 function setInputState(connected: boolean): void {
   if (messageInput) messageInput.disabled = !connected;
   if (sendButton) sendButton.disabled = !connected;
-  if (usernameInput) usernameInput.disabled = !connected; // Desabilita o nome após conectar
+  if (usernameInput) usernameInput.disabled = connected; // Desabilita nome se conectado
 }
 
-// --- Lógica WebSocket ---
-
+// Conecta ao WebSocket
 function connectWebSocket(): void {
-  updateStatus('Conectando...', '#666');
-  setInputState(false); // Desabilita inputs enquanto tenta conectar
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    console.warn('Já conectado.');
+    return;
+  }
+
+  updateStatus('Conectando...');
+  setInputState(false);
 
   socket = new WebSocket(websocketUrl);
 
-  socket.onopen = (event: Event) => {
-    updateStatus('Conectado! Digite sua mensagem.', 'green');
-    setInputState(true);
-    appendMessage('Sistema', 'Conectado ao servidor de chat.', false);
-    messageInput.focus(); // Coloca o foco no campo de mensagem
+  socket.onopen = () => {
+    if (currentUsername) {
+      updateStatus(`${currentUsername} Conectado! Digite sua mensagem.`, 'green');
+      setInputState(true);
+      appendMessage(currentUsername, 'Conectado ao servidor.', false);
+      messageInput?.focus();
+
+      // Envia mensagem para os outros usuários
+      const joinMessage: ChatMessage = {
+        user: currentUsername,
+        text: 'entrou no chat.',
+        timestamp: Date.now(),
+      };
+
+      socket?.send(JSON.stringify(joinMessage));
+    }
   };
 
   socket.onmessage = (event: MessageEvent) => {
     try {
-      const receivedData: ChatMessage = JSON.parse(event.data);
-      if (receivedData.user && receivedData.text) {
-        const isSelfMessage: boolean = receivedData.user === currentUsername;
-        appendMessage(receivedData.user, receivedData.text, isSelfMessage);
-      } else {
-        console.warn('Mensagem recebida com formato inesperado:', receivedData);
+      const received: ChatMessage = JSON.parse(event.data);
+      if (received.user && received.text) {
+        const isSelf = received.user === currentUsername;
+        appendMessage(received.user, received.text, isSelf);
       }
-    } catch (e) {
-      console.error('Erro ao processar mensagem recebida:', e);
+    } catch (err) {
+      console.error('Erro ao processar mensagem:', err);
     }
   };
 
   socket.onclose = (event: CloseEvent) => {
-    updateStatus(`Desconectado. Código: ${event.code}, Razão: ${event.reason || 'N/A'}`, 'red');
+    updateStatus(`Desconectado (código ${event.code}).`, 'red');
     setInputState(false);
-    appendMessage('Sistema', 'Desconectado do chat. Tentando reconectar em 5 segundos...', false);
-    // Tenta reconectar a menos que seja uma desconexão normal (código 1000)
+    appendMessage('Sistema', 'Desconectado. Reconnectando em 5s...', false);
     if (event.code !== 1000) {
       setTimeout(connectWebSocket, 5000);
     }
   };
 
-  socket.onerror = (error: Event) => {
-    console.error('Erro no WebSocket:', error);
-    updateStatus('Erro na conexão. Verifique o console.', 'red');
-    if (socket) {
-      socket.close(); // Tenta fechar para acionar o onclose e a reconexão
-    }
+  socket.onerror = (event: Event) => {
+    console.error('Erro WebSocket:', event);
+    updateStatus('Erro de conexão.', 'red');
+    socket?.close();
   };
 }
 
+// Envia a mensagem pelo WebSocket
 function sendMessage(): void {
-  const messageText = messageInput.value.trim();
-  if (messageText === '') {
-    return; // Não envia mensagens vazias
-  }
-  if (currentUsername === '') {
-    alert('Por favor, digite seu nome antes de enviar uma mensagem.');
-    usernameInput.focus();
+  const text = messageInput?.value.trim();
+  if (!text || text === '') return;
+
+  if (!currentUsername) {
+    alert('Digite seu nome.');
+    usernameInput?.focus();
     return;
   }
 
   if (socket && socket.readyState === WebSocket.OPEN) {
-    const chatMessage: ChatMessage = {
+    const msg: ChatMessage = {
       user: currentUsername,
-      text: messageText,
-      timestamp: Date.now()
+      text,
+      timestamp: Date.now(),
     };
-    socket.send(JSON.stringify(chatMessage));
-    messageInput.value = ''; // Limpa o input após enviar
+    socket.send(JSON.stringify(msg));
+    if (messageInput) messageInput.value = '';
   } else {
-    updateStatus('Não conectado ao servidor.', 'orange');
-    appendMessage('Sistema', 'Não foi possível enviar a mensagem. Conecte-se primeiro.', false);
+    updateStatus('Não conectado.', 'orange');
+    appendMessage('Sistema', 'Você não está conectado.', false);
   }
 }
 
+// Desconecta o WebSocket
 function disconnectWebSocket(): void {
   if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.close(1000, 'Desconexão manual do cliente');
+    socket.close(1000, 'Cliente desconectado');
     updateStatus('Desconectando...', 'blue');
-    console.log('Desconexão WebSocket solicitada.');
   } else {
-    console.log('Nenhuma conexão WebSocket ativa para desconectar.');
+    console.log('Sem conexão ativa.');
   }
 }
 
-// --- Event Listeners ---
-
-// Quando o DOM estiver completamente carregado, configure os listeners e inicie a conexão
+// Listeners e inicialização
 document.addEventListener('DOMContentLoaded', () => {
-  // Configura o nome de usuário ao sair do campo
-  usernameInput.addEventListener('blur', () => {
-    const newUsername = usernameInput.value.trim();
-    if (newUsername !== '') {
-      currentUsername = newUsername;
-      updateStatus(`Seu nome de usuário: ${currentUsername}`, '#0056b3');
-      // Se já estiver conectado, o campo de mensagem já será habilitado
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        messageInput.focus();
-      }
+  if (!usernameInput || !messageInput || !sendButton) return;
+
+  const tryConnect = () => {
+    const newUser = usernameInput.value.trim();
+    if (newUser && (!socket || socket.readyState !== WebSocket.OPEN)) {
+      currentUsername = newUser;
+      connectWebSocket(); // Agora conecta aqui!
+    }
+  };
+
+  usernameInput.addEventListener('blur', tryConnect);
+
+  usernameInput.addEventListener('keypress', (e: KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      usernameInput.blur(); // Gatilho para o blur
     }
   });
 
-  // Se o usuário pressionar Enter no campo de nome, define o nome e foca na mensagem
-  usernameInput.addEventListener('keypress', (event: KeyboardEvent) => {
-    if (event.key === 'Enter') {
-      usernameInput.blur(); // Dispara o evento 'blur'
-    }
-  });
-
-  // Botão de envio
   sendButton.addEventListener('click', sendMessage);
 
-  // Enviar mensagem ao pressionar Enter no campo de mensagem
-  messageInput.addEventListener('keypress', (event: KeyboardEvent) => {
-    if (event.key === 'Enter') {
-      sendMessage();
-    }
+  messageInput.addEventListener('keypress', (e: KeyboardEvent) => {
+    if (e.key === 'Enter') sendMessage();
   });
 
-  // Iniciar a conexão WebSocket
-  connectWebSocket();
+  // Foco automático no nome se vazio
+  if (usernameInput.value.trim() === '') {
+    usernameInput.focus();
+  }
 });
 
-// Exponha funções globalmente para o HTML (se usar onclick no HTML)
-// Em um ambiente Angular, você chamaria essas funções a partir dos métodos do componente
+// Expõe globalmente para testes (opcional)
 (window as any).sendWebSocketMessage = sendMessage;
 (window as any).disconnectWebSocket = disconnectWebSocket;
