@@ -1,5 +1,5 @@
 {
-  "name": "carangueijo-ui",
+  "name": "caranguejo-ui",
   "version": "0.0.0",
   "scripts": {
     "ng": "ng",
@@ -7,6 +7,12 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
+  },
+  "build": {
+    "frontendDist": "../dist/CaranguejoUI/browser",
+    "devUrl": "http://localhost:4200",
+    "beforeDevCommand": "ng serve --host 0.0.0.0 --port 4200",
+    "beforeBuildCommand": "ng build"
   },
   "prettier": {
     "overrides": [
